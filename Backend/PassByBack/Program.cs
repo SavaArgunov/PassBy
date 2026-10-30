@@ -59,6 +59,7 @@ builder.Services
     });
 
 builder.Services.AddAuthorization();
+builder.Services.AddRoleAuthorization();
 
 var app = builder.Build();
 
