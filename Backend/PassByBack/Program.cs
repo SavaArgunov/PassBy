@@ -69,6 +69,7 @@ builder.Services
     });
 
 builder.Services.AddAuthorization();
+builder.Services.AddRoleAuthorization();
 
 builder.Services.AddScoped<AuthService>();
 

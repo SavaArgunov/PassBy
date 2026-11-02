@@ -63,5 +63,7 @@ public class AppDbContext : DbContext
                 .HasForeignKey<Deliverer>(x => x.UserId)
                 .OnDelete(DeleteBehavior.NoAction);
         });
+
+        modelBuilder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);
     }
 }

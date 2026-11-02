@@ -1,1 +1,35 @@
+# .NET build
+**/bin/
+**/obj/
+
+# Rider / JetBrains
 .idea/
+**/.idea/
+*.sln.iml
+
+# Visual Studio
+.vs/
+**/.vs/
+*.user
+*.suo
+*.userosscache
+
+# Operating System
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+**/appsettings.Development.local.json
+**/appsettings.Local.json
+
+# Test results
+**/TestResults/
+*.coverage
+*.coveragexml
