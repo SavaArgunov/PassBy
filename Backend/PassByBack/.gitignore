@@ -317,6 +317,8 @@ node_modules/
 **/*.DesktopClient/ModelManifest.xml
 **/*.Server/GeneratedArtifacts
 **/*.Server/ModelManifest.xml
+**/bin/
+**/obj/
 _Pvt_Extensions
 
 # Paket dependency manager

@@ -1,5 +1,6 @@
-﻿using Microsoft.EntityFrameworkCore;
-using PassByBack.Models;
+﻿
+using Microsoft.EntityFrameworkCore;
+using PassByBack.Models.Entities;
 
 namespace PassByBack.Data;
 
@@ -10,24 +11,57 @@ public class AppDbContext : DbContext
     {
     }
 
-    public DbSet<User> Users => Set<User>();
-    public DbSet<Role> Roles => Set<Role>();
-    public DbSet<UserRole> UserRoles => Set<UserRole>();
+    public DbSet<UserAccount> UserAccounts => Set<UserAccount>();
+    public DbSet<PasswordCredential> PasswordCredentials => Set<PasswordCredential>();
+    public DbSet<DeliveryRequester> DeliveryRequesters => Set<DeliveryRequester>();
+    public DbSet<Deliverer> Deliverers => Set<Deliverer>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
-        modelBuilder.Entity<User>(entity =>
+        base.OnModelCreating(modelBuilder);
+
+        modelBuilder.Entity<UserAccount>(entity =>
         {
-            entity.ToTable("User");
+            entity.HasKey(x => x.UserId);
 
-            entity.HasKey(u => u.UserId);
-
-            entity.Property(u => u.Email)
-                .HasMaxLength(320)
-                .IsRequired();
-
-            entity.HasIndex(u => u.Email)
+            entity.HasIndex(x => x.EmailAddress)
                 .IsUnique();
+
+            // entity.Property(x => x.RegisteredAtUtc)
+            //     .HasDefaultValueSql("SYSUTCDATETIME()");
+
+            entity.Property(x => x.IsBlocked)
+                .HasDefaultValue(false);
+        });
+
+        modelBuilder.Entity<PasswordCredential>(entity =>
+        {
+            entity.HasKey(x => x.UserId);
+
+            entity.HasOne(x => x.UserAccount)
+                .WithOne(x => x.PasswordCredential)
+                .HasForeignKey<PasswordCredential>(x => x.UserId)
+                .OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<DeliveryRequester>(entity =>
+        {
+            entity.HasKey(x => x.UserId);
+
+            entity.HasOne(x => x.UserAccount)
+                .WithOne(x => x.DeliveryRequester)
+                .HasForeignKey<DeliveryRequester>(x => x.UserId)
+                .OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<Deliverer>(entity =>
+        {
+            entity.HasKey(x => x.UserId);
+
+            entity.HasOne(x => x.UserAccount)
+                .WithOne(x => x.Deliverer)
+                .HasForeignKey<Deliverer>(x => x.UserId)
+                .OnDelete(DeleteBehavior.NoAction);
         });
 
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);
