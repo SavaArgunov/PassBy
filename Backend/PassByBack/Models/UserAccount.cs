@@ -1,20 +1,31 @@
-﻿namespace PassByBack.Models;
+﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
 
-public class User
+namespace PassByBack.Models.Entities;
+
+[Table("UserAccount")]
+public class UserAccount
 {
-    public Guid UserId { get; set; } = Guid.NewGuid();
+    [Key]
+    [DatabaseGenerated(DatabaseGeneratedOption.Identity)]
+    [Column("userId")]
+    public int UserId { get; set; }
 
-    public string FirstName { get; set; } = "";
-    public string SecondName { get; set; } = "";
+    [Required]
+    [Column("emailAddress")]
+    public string EmailAddress { get; set; } = string.Empty;
 
-    public string PasswordHash { get; set; } = "";
+    [Required]
+    [Column("phoneNumber")]
+    public string PhoneNumber { get; set; } = string.Empty;
 
-    public DateOnly? DateOfBirth { get; set; }
-    public string? PhoneNumber { get; set; }
-    public string? AvatarUrl { get; set; }
+    [Column("registeredAtUtc")]
+    public DateTime RegisteredAtUtc { get; set; }
 
-    public string Email { get; set; } = "";
+    [Column("isBlocked")]
+    public bool IsBlocked { get; set; }
 
-    public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
-    public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;
+    public PasswordCredential? PasswordCredential { get; set; }
+    public DeliveryRequester? DeliveryRequester { get; set; }
+    public Deliverer? Deliverer { get; set; }
 }
