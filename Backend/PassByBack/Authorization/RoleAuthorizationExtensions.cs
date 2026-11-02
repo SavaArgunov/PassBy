@@ -1,25 +1,27 @@
 ﻿using Microsoft.AspNetCore.Authentication;
 using PassByBack.Authorization;
 
-// Namespace намеренно такой, чтобы в Program.cs не нужен был дополнительный using.
+// Namespace навмисно такий, щоб у Program.cs не потрібен був додатковий using.
 namespace Microsoft.Extensions.DependencyInjection;
 
 public static class RoleAuthorizationExtensions
 {
     /// <summary>
-    /// Подключает рольовую авторизацию: подгрузку ролей из БД и политики.
-    /// Вызывать после AddAuthentication / AddAuthorization.
+    /// Підключає рольову авторизацію: сховище ролей, підвантаження ролей у claims і політики.
+    /// Потребує рядка підключення ConnectionStrings:PassBy.
+    /// Викликати після AddAuthentication / AddAuthorization.
     /// </summary>
     public static IServiceCollection AddRoleAuthorization(this IServiceCollection services)
     {
+        services.AddScoped<IRoleStore, SqlRoleStore>();
         services.AddScoped<IClaimsTransformation, RoleClaimsTransformation>();
-        services.AddHostedService<RoleSeeder>();
 
         services.AddAuthorization(options =>
         {
-            options.AddPolicy(AppPolicies.RequireSender, p => p.RequireRole(AppRoles.Sender));
-            options.AddPolicy(AppPolicies.RequireDeliverer, p => p.RequireRole(AppRoles.Deliverer));
-            options.AddPolicy(AppPolicies.RequireAdmin, p => p.RequireRole(AppRoles.Admin));
+            options.AddPolicy(AppPolicies.RequireDeliveryRequester,
+                p => p.RequireRole(AppRoles.DeliveryRequester));
+            options.AddPolicy(AppPolicies.RequireDeliverer,
+                p => p.RequireRole(AppRoles.Deliverer));
         });
 
         return services;

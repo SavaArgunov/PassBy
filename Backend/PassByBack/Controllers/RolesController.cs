@@ -1,11 +1,7 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 using PassByBack.Authorization;
-using PassByBack.Contracts;
-using PassByBack.Data;
-using PassByBack.Models;
 
 namespace PassByBack.Controllers;
 
@@ -14,54 +10,53 @@ namespace PassByBack.Controllers;
 [Authorize]
 public class RolesController : ControllerBase
 {
-    private readonly AppDbContext _db;
+    private readonly IRoleStore _roles;
 
-    public RolesController(AppDbContext db)
+    public RolesController(IRoleStore roles)
     {
-        _db = db;
+        _roles = roles;
     }
 
-    //список всех ролей системы
+    // Перелік ролей системи
     [HttpGet]
-    public async Task<IActionResult> GetAll()
+    public IActionResult GetAll()
     {
-        var roles = await _db.Roles
-            .OrderBy(r => r.RoleId)
-            .Select(r => new { r.RoleId, r.Name })
-            .ToListAsync();
-
-        return Ok(roles.Select(r => new
-        {
-            r.RoleId,
-            r.Name,
-            selfAssignable = AppRoles.SelfAssignable.Contains(r.Name)
-        }));
+        return Ok(AppRoles.All.Select(name => new { name }));
     }
 
-    //роли текущего пользователя
+    // Ролі поточного користувача
     [HttpGet("my")]
     public async Task<IActionResult> GetMine()
     {
-        if (!TryGetUserId(out var userId))
+        var account = await GetAccountAsync();
+
+        if (account == null)
         {
             return Unauthorized();
         }
 
-        return Ok(new
+        if (account.IsBlocked)
         {
-            userId,
-            roles = await GetRoleNamesAsync(userId)
-        });
+            return BlockedResponse();
+        }
+
+        return Ok(ToResponse(account));
     }
 
-    //получение роли текущим пользователем
+    // Отримання ролі поточним користувачем
     [HttpPost("acquire")]
     public async Task<IActionResult> Acquire([FromBody] AcquireRoleRequest request)
     {
-        if (!TryGetUserId(out var userId) ||
-            !await _db.Users.AnyAsync(u => u.UserId == userId))
+        var account = await GetAccountAsync();
+
+        if (account == null)
         {
             return Unauthorized();
+        }
+
+        if (account.IsBlocked)
+        {
+            return BlockedResponse();
         }
 
         if (!AppRoles.TryNormalize(request.Role, out var roleName))
@@ -69,80 +64,54 @@ public class RolesController : ControllerBase
             return BadRequest(new
             {
                 message = "Неизвестная роль",
-                available = AppRoles.SelfAssignable
+                available = AppRoles.All
             });
         }
 
-        if (!AppRoles.SelfAssignable.Contains(roleName))
-        {
-            return StatusCode(StatusCodes.Status403Forbidden, new
-            {
-                message = "Эту роль нельзя получить самостоятельно"
-            });
-        }
-
-        var role = await _db.Roles.SingleOrDefaultAsync(r => r.Name == roleName);
-
-        if (role == null)
-        {
-            return StatusCode(StatusCodes.Status500InternalServerError, new
-            {
-                message = "Роль не найдена в базе данных"
-            });
-        }
-
-        if (await _db.UserRoles.AnyAsync(ur => ur.UserId == userId && ur.RoleId == role.RoleId))
+        if (account.Roles.Any(r => r.Name == roleName) ||
+            !await _roles.AddRoleAsync(account.UserId, roleName))
         {
             return Conflict(new { message = "Эта роль уже получена" });
         }
 
-        _db.UserRoles.Add(new UserRole
-        {
-            UserId = userId,
-            RoleId = role.RoleId
-        });
+        var updated = await _roles.GetAccountRolesAsync(account.UserId);
 
-        try
-        {
-            await _db.SaveChangesAsync();
-        }
-        catch (DbUpdateException)
-        {
-            //параллельный запрос уже добавил эту роль
-            return Conflict(new { message = "Эта роль уже получена" });
-        }
-
-        return Ok(new
-        {
-            userId,
-            roles = await GetRoleNamesAsync(userId)
-        });
+        return Ok(ToResponse(updated ?? account));
     }
 
-    //эндпоинты для проверки рольовых прав, можно будет удалить
+    // --- Ендпоінти для перевірки рольових прав (можна видалити після тестів) ---
 
-    [HttpGet("check/sender")]
-    [Authorize(Policy = AppPolicies.RequireSender)]
-    public IActionResult CheckSender() => Ok(new { message = "Доступ для Sender разрешён" });
+    [HttpGet("check/delivery-requester")]
+    [Authorize(Policy = AppPolicies.RequireDeliveryRequester)]
+    public IActionResult CheckDeliveryRequester() =>
+        Ok(new { message = "Доступ для DeliveryRequester разрешён" });
 
     [HttpGet("check/deliverer")]
     [Authorize(Policy = AppPolicies.RequireDeliverer)]
-    public IActionResult CheckDeliverer() => Ok(new { message = "Доступ для Deliverer разрешён" });
+    public IActionResult CheckDeliverer() =>
+        Ok(new { message = "Доступ для Deliverer разрешён" });
 
-    [HttpGet("check/admin")]
-    [Authorize(Policy = AppPolicies.RequireAdmin)]
-    public IActionResult CheckAdmin() => Ok(new { message = "Доступ для Admin разрешён" });
-
-    private bool TryGetUserId(out Guid userId)
+    private async Task<AccountRoles?> GetAccountAsync()
     {
-        var sub = User.FindFirst("sub")?.Value;
-        return Guid.TryParse(sub, out userId);
+        if (!long.TryParse(User.FindFirst("sub")?.Value, out var userId))
+        {
+            return null;
+        }
+
+        return await _roles.GetAccountRolesAsync(userId);
     }
 
-    private Task<List<string>> GetRoleNamesAsync(Guid userId) =>
-        _db.UserRoles
-            .Where(ur => ur.UserId == userId)
-            .OrderBy(ur => ur.RoleId)
-            .Select(ur => ur.Role.Name)
-            .ToListAsync();
+    private static object ToResponse(AccountRoles account) => new
+    {
+        userId = account.UserId,
+        roles = account.Roles.Select(r => new
+        {
+            name = r.Name,
+            registeredAtUtc = r.RegisteredAtUtc,
+            isBlocked = r.IsBlocked
+        })
+    };
+
+    private IActionResult BlockedResponse() =>
+        StatusCode(StatusCodes.Status403Forbidden, new { message = "Аккаунт заблокирован" });
 }
