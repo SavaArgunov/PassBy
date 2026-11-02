@@ -1,6 +1,6 @@
 ﻿using System.ComponentModel.DataAnnotations;
 
-namespace PassByBack.Contracts;
+namespace PassByBack.Authorization;
 
 public class AcquireRoleRequest
 {

@@ -1,24 +1,22 @@
 ﻿using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
-using Microsoft.EntityFrameworkCore;
-using PassByBack.Data;
 
 namespace PassByBack.Authorization;
 
 /// <summary>
-/// После проверки JWT добавляет к пользователю его роли из БД как claims.
-/// Благодаря этому [Authorize(Roles = "...")] и политики работают без изменения
-/// выдачи токена, а новая роль действует сразу, без повторного входа.
+/// Після перевірки JWT додає до користувача його ролі з БД як claims.
+/// Роль надається, якщо є запис у Deliverer / DeliveryRequester і при цьому
+/// не заблоковано ні акаунт, ні сам профіль. Нова роль діє одразу, без повторного входу.
 /// </summary>
 public class RoleClaimsTransformation : IClaimsTransformation
 {
     private const string LoadedMarker = "passby:roles_loaded";
 
-    private readonly AppDbContext _db;
+    private readonly IRoleStore _roles;
 
-    public RoleClaimsTransformation(AppDbContext db)
+    public RoleClaimsTransformation(IRoleStore roles)
     {
-        _db = db;
+        _roles = roles;
     }
 
     public async Task<ClaimsPrincipal> TransformAsync(ClaimsPrincipal principal)
@@ -28,7 +26,7 @@ public class RoleClaimsTransformation : IClaimsTransformation
             return principal;
         }
 
-        // Метод может вызываться несколько раз за запрос, поэтому он идемпотентный.
+        // Метод може викликатися кілька разів за запит, тому він ідемпотентний.
         if (principal.HasClaim(c => c.Type == LoadedMarker))
         {
             return principal;
@@ -36,22 +34,22 @@ public class RoleClaimsTransformation : IClaimsTransformation
 
         var sub = (principal.FindFirst("sub") ?? principal.FindFirst(ClaimTypes.NameIdentifier))?.Value;
 
-        if (!Guid.TryParse(sub, out var userId))
+        if (!long.TryParse(sub, out var userId))
         {
             return principal;
         }
 
-        var roles = await _db.UserRoles
-            .Where(ur => ur.UserId == userId)
-            .Select(ur => ur.Role.Name)
-            .ToListAsync();
+        var account = await _roles.GetAccountRolesAsync(userId);
 
         var clone = principal.Clone();
         var identity = (ClaimsIdentity)clone.Identity!;
 
-        foreach (var role in roles)
+        if (account is { IsBlocked: false })
         {
-            identity.AddClaim(new Claim(ClaimTypes.Role, role));
+            foreach (var role in account.Roles.Where(r => !r.IsBlocked))
+            {
+                identity.AddClaim(new Claim(ClaimTypes.Role, role.Name));
+            }
         }
 
         identity.AddClaim(new Claim(LoadedMarker, "1"));
