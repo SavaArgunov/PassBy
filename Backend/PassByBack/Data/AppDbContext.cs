@@ -1,6 +1,5 @@
-﻿
-using Microsoft.EntityFrameworkCore;
-using PassByBack.Models.Entities;
+﻿using Microsoft.EntityFrameworkCore;
+using PassByBack.Models;
 
 namespace PassByBack.Data;
 
@@ -63,5 +62,7 @@ public class AppDbContext : DbContext
                 .HasForeignKey<Deliverer>(x => x.UserId)
                 .OnDelete(DeleteBehavior.NoAction);
         });
+
+        modelBuilder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);
     }
 }
