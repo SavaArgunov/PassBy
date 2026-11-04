@@ -8,6 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
 using PassByBack.Data;
 using PassByBack.Models;
@@ -134,13 +135,32 @@ app.UseAuthorization();
 
 app.MapControllers();
 
-    app.MapGet("/api/health", () =>
+app.MapGet("/api/health/db", async (
+    AppDbContext db,
+    CancellationToken cancellationToken) =>
 {
-    return Results.Ok(new
+    try
     {
-        status = "OK",
-        message = "PassByBack API is running"
-    });
+        bool hasUsers = await db.UserAccounts
+            .AnyAsync(cancellationToken);
+
+        return Results.Ok(new
+        {
+            status = "OK",
+            database = "Connected",
+            userAccountTable = "Accessible",
+            hasUsers
+        });
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogError(ex, "Database health check failed");
+
+        return Results.Problem(
+            title: "Database connection failed",
+            statusCode: 503
+        );
+    }
 });
 
 app.Run();
