@@ -1,5 +1,4 @@
-﻿
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using PassByBack.Models.Entities;
 
 namespace PassByBack.Data;
@@ -20,6 +19,8 @@ public class AppDbContext : DbContext
     {
         base.OnModelCreating(modelBuilder);
 
+        // Схему БД створюють SQL-скрипти з папки Database/ (без EF-міграцій).
+
         modelBuilder.Entity<UserAccount>(entity =>
         {
             entity.HasKey(x => x.UserId);
@@ -27,20 +28,16 @@ public class AppDbContext : DbContext
             entity.HasIndex(x => x.EmailAddress)
                 .IsUnique();
 
-            // entity.Property(x => x.RegisteredAtUtc)
-            //     .HasDefaultValueSql("SYSUTCDATETIME()");
+            entity.HasIndex(x => x.CredentialId)
+                .IsUnique();
 
             entity.Property(x => x.IsBlocked)
                 .HasDefaultValue(false);
-        });
 
-        modelBuilder.Entity<PasswordCredential>(entity =>
-        {
-            entity.HasKey(x => x.UserId);
-
-            entity.HasOne(x => x.UserAccount)
-                .WithOne(x => x.PasswordCredential)
-                .HasForeignKey<PasswordCredential>(x => x.UserId)
+            // UserAccount.credentialId -> PasswordCredential.credentialId
+            entity.HasOne(x => x.PasswordCredential)
+                .WithOne()
+                .HasForeignKey<UserAccount>(x => x.CredentialId)
                 .OnDelete(DeleteBehavior.NoAction);
         });
 

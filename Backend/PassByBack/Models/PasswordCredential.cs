@@ -7,19 +7,19 @@ namespace PassByBack.Models.Entities;
 public class PasswordCredential
 {
     [Key]
-    [ForeignKey(nameof(UserAccount))]
-    [Column("userId")]
-    public int UserId { get; set; }
+    [DatabaseGenerated(DatabaseGeneratedOption.Identity)]
+    [Column("credentialId")]
+    public long CredentialId { get; set; }
 
     [Required]
+    [MaxLength(1024)]
     [Column("passwordHash")]
     public string PasswordHash { get; set; } = string.Empty;
 
     [Column("createdAtUtc")]
     public DateTime CreatedAtUtc { get; set; }
 
+    // У БД стовпець NOT NULL (за замовчуванням SYSUTCDATETIME())
     [Column("changedAtUtc")]
-    public DateTime? ChangedAtUtc { get; set; }
-
-    public UserAccount UserAccount { get; set; } = null!;
+    public DateTime ChangedAtUtc { get; set; }
 }

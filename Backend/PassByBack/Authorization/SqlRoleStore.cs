@@ -19,8 +19,11 @@ WHERE a.userId = @userId;";
 
     public SqlRoleStore(IConfiguration configuration)
     {
-        _connectionString = configuration.GetConnectionString("PassBy")
-            ?? throw new InvalidOperationException("Connection string 'PassBy' is missing");
+        // Основний ключ проєкту — DefaultConnection; PassBy лишається запасним (docker-compose.dev.yml).
+        _connectionString = configuration.GetConnectionString("DefaultConnection")
+            ?? configuration.GetConnectionString("PassBy")
+            ?? throw new InvalidOperationException(
+                "Connection string 'DefaultConnection' is missing");
     }
 
     public async Task<AccountRoles?> GetAccountRolesAsync(

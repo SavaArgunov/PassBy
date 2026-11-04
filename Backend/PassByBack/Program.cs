@@ -1,40 +1,61 @@
 ﻿using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi.Models;
 using PassByBack.Data;
-using PassByBack.Models;
 using PassByBack.Models.Entities;
 using PassByBack.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
 Console.WriteLine($"Environment: {builder.Environment.EnvironmentName}");
-Console.WriteLine($"UserSecrets ID: {builder.Environment.ApplicationName}");
 Console.WriteLine(
     $"JWT key found: {!string.IsNullOrWhiteSpace(builder.Configuration["Jwt:Key"])}"
 );
 
-
 builder.Services.AddControllers();
 
-builder.Services.AddSwaggerGen();
+builder.Services.AddSwaggerGen(options =>
+{
+    options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Name = "Authorization",
+        Type = SecuritySchemeType.Http,
+        Scheme = "bearer",
+        BearerFormat = "JWT",
+        In = ParameterLocation.Header,
+        Description = "Вставте access token (без слова Bearer)"
+    });
 
+    options.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
+        {
+            new OpenApiSecurityScheme
+            {
+                Reference = new OpenApiReference
+                {
+                    Type = ReferenceType.SecurityScheme,
+                    Id = "Bearer"
+                }
+            },
+            Array.Empty<string>()
+        }
+    });
+});
+
+// Рядок підключення не зберігаємо в репозиторії:
+// локально: dotnet user-secrets set "ConnectionStrings:DefaultConnection" "..."
+// у Docker/на сервері: змінна середовища ConnectionStrings__DefaultConnection
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
+    ?? throw new InvalidOperationException(
+        "Connection string 'DefaultConnection' is missing " +
+        "(use user-secrets or the ConnectionStrings__DefaultConnection environment variable)");
 
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlServer(
-        builder.Configuration.GetConnectionString("DefaultConnection")
-    )
+    options.UseSqlServer(connectionString)
 );
-
-
 
 var jwtKey = builder.Configuration["Jwt:Key"]
              ?? throw new InvalidOperationException("JWT key is missing");
@@ -96,30 +117,13 @@ app.UseCors("Frontend");
 
 using (var scope = app.Services.CreateScope())
 {
-    var db = scope.ServiceProvider
-        .GetRequiredService<AppDbContext>();
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
     Console.WriteLine(
         await db.Database.CanConnectAsync()
             ? "Database connected!"
             : "Database connection failed!"
     );
-}
-
-using (var scope = app.Services.CreateScope())
-{
-    var db = scope.ServiceProvider
-        .GetRequiredService<AppDbContext>();
-
-    bool connected = await db.Database.CanConnectAsync();
-
-    Console.WriteLine($"Connected: {connected}");
-
-    if (connected)
-    {
-        int usersCount = await db.UserAccounts.CountAsync();
-        Console.WriteLine($"Users count: {usersCount}");
-    }
 }
 
 if (app.Environment.IsDevelopment())
