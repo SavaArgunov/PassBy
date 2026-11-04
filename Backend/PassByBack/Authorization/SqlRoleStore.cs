@@ -19,7 +19,7 @@ WHERE a.userId = @userId;";
 
     public SqlRoleStore(IConfiguration configuration)
     {
-        _connectionString = configuration.GetConnectionString("PassBy")
+        _connectionString = configuration.GetConnectionString("DefaultConnection")
             ?? throw new InvalidOperationException("Connection string 'PassBy' is missing");
     }
 
