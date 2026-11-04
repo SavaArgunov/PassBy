@@ -1,0 +1,64 @@
+# Локальний стенд для розробки: SQL Server 2025 + Database/*.sql + API.
+# Лише для розробки, дані та паролі нижче не для продакшену.
+#
+# Запуск (з кореня репозиторію):
+#   docker compose -f docker-compose.dev.yml up --build
+# Повне скидання БД:
+#   docker compose -f docker-compose.dev.yml down -v
+
+services:
+  db:
+    image: mcr.microsoft.com/mssql/server:2025-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:-PassBy_Dev_123!}
+    ports:
+      - "127.0.0.1:1433:1433"
+    volumes:
+      - passby-sql-data:/var/opt/mssql
+
+  # Одноразово виконує Database/01 і 02. Образ 2022 береться лише заради sqlcmd,
+  # який підключається до сервера 2025 по мережі.
+  db-init:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    depends_on:
+      - db
+    environment:
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:-PassBy_Dev_123!}
+    volumes:
+      - ./Database:/scripts:ro
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        SQLCMD="/opt/mssql-tools18/bin/sqlcmd -S db -U sa -P $${MSSQL_SA_PASSWORD} -C -b"
+        for i in $$(seq 1 60); do
+          $$SQLCMD -Q "SELECT 1" > /dev/null 2>&1 && break
+          echo "Waiting for SQL Server ($$i/60)..."
+          sleep 2
+        done
+        EXISTS=$$($$SQLCMD -h -1 -W -Q "SET NOCOUNT ON; SELECT COUNT(*) FROM sys.databases WHERE name = N'PassBy'" | tr -d '[:space:]')
+        if [ "$$EXISTS" = "0" ]; then
+          echo "Creating database PassBy..."
+          $$SQLCMD -f 65001 -i /scripts/01-create-database.sql &&
+          $$SQLCMD -f 65001 -i /scripts/02-create-tables.sql &&
+          echo "Done."
+        else
+          echo "Database PassBy already exists, skipping."
+        fi
+
+  api:
+    build: ./Backend/PassByBack
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    ports:
+      - "8080:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      Jwt__Key: ${JWT_KEY:-dev-only-key-change-me-0123456789abcdef}
+      Jwt__Issuer: PassByBack
+      Jwt__Audience: PassByClients
+      ConnectionStrings__DefaultConnection: "Server=db;Database=PassBy;User Id=sa;Password=${MSSQL_SA_PASSWORD:-PassBy_Dev_123!};TrustServerCertificate=True"
+
+volumes:
+  passby-sql-data:
