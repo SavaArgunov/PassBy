@@ -34,4 +34,31 @@ public class AuthController : ControllerBase
 
         return StatusCode(StatusCodes.Status201Created, result);
     }
+
+    [HttpPost("login")]
+    public async Task<IActionResult> Login(
+        [FromBody] LoginRequest request,
+        CancellationToken cancellationToken)
+    {
+        var (status, response) = await _authService.LoginAsync(
+            request, cancellationToken);
+
+        if (status == LoginStatus.Blocked)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new
+            {
+                message = "Account is blocked"
+            });
+        }
+
+        if (status != LoginStatus.Success)
+        {
+            return Unauthorized(new
+            {
+                message = "Invalid email or password"
+            });
+        }
+
+        return Ok(response);
+    }
 }
