@@ -1,4 +1,6 @@
-﻿using Microsoft.EntityFrameworkCore;
+﻿
+using Microsoft.EntityFrameworkCore;
+using PassByBack.Models;
 using PassByBack.Models.Entities;
 
 namespace PassByBack.Data;
