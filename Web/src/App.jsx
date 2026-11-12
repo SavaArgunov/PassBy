@@ -4,6 +4,7 @@ import VerifyPhone from './pages/VerifyPhone.jsx';
 import RoleSelect from './pages/RoleSelect.jsx';
 import CardVerify from './pages/CardVerify.jsx';
 import Dashboard from './pages/Dashboard.jsx';
+import IdentityVerification from './pages/IdentityVerification.jsx';
 import { getToken, isTokenValid, onUnauthorized, setToken } from './api.js';
 
 export default function App() {
@@ -43,6 +44,10 @@ export default function App() {
     return <RoleSelect onBack={() => setStep('verify')} onDone={() => setStep('dashboard')} />;
   }
 
+  if (step === 'identity') {
+    return <IdentityVerification onBack={() => setStep('dashboard')} />;
+  }
+
   if (step === 'card') {
     return <CardVerify onBack={() => setStep('dashboard')} />;
   }
@@ -51,6 +56,7 @@ export default function App() {
     <Dashboard
       name={profile.name}
       onLogout={() => logout()}
+      onOpenVerification={() => setStep('identity')}
       onOpenCard={() => setStep('card')}
     />
   );

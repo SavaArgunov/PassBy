@@ -26,7 +26,7 @@ function Badge({ status }) {
   return <span className={'badge ' + cls}>{status || 'ERR'}</span>;
 }
 
-export default function Dashboard({ name, onLogout, onOpenCard }) {
+export default function Dashboard({ name, onLogout, onOpenCard, onOpenVerification }) {
   const claims = decodeJwt(getToken() || '') || {};
   const left = useCountdown(claims.exp || 0);
 
@@ -129,6 +129,13 @@ export default function Dashboard({ name, onLogout, onOpenCard }) {
             <span><Badge status={checks.deliverer} /> <button type="button" className="btn btn-outline btn-small" onClick={() => runCheck('deliverer', rolesApi.checkDeliverer)}>Перевірити</button></span>
           </div>
         </div>
+      </section>
+
+      <section className="dash-card">
+        <h2>Верифікація особи</h2>
+        <button type="button" className="btn btn-outline btn-small" onClick={onOpenVerification}>
+          Документи та перевірки
+        </button>
       </section>
 
       <section className="dash-card">

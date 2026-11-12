@@ -74,9 +74,10 @@ function maskTokens(data) {
 
 let counter = 0;
 
-export async function api(method, path, body, { auth = true } = {}) {
+export async function api(method, path, body, { auth = true, log = true, idempotencyKey } = {}) {
   const headers = {};
   if (body !== undefined) headers['Content-Type'] = 'application/json';
+  if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
 
   const token = getToken();
   const sentToken = auth && !!token;
@@ -102,17 +103,19 @@ export async function api(method, path, body, { auth = true } = {}) {
     data = { message: 'Немає зʼєднання з сервером' };
   }
 
-  const entry = {
-    id: ++counter,
-    time: new Date().toLocaleTimeString('uk-UA'),
-    method,
-    path,
-    status,
-    data: maskTokens(data)
-  };
-  logListeners.forEach((fn) => fn(entry));
+  if (log) {
+    const entry = {
+      id: ++counter,
+      time: new Date().toLocaleTimeString('uk-UA'),
+      method,
+      path,
+      status,
+      data: maskTokens(data)
+    };
+    logListeners.forEach((fn) => fn(entry));
+  }
 
-  if (status === 401 && sentToken) {
+  if (status === 401 && auth) {
     unauthorizedListeners.forEach((fn) => fn());
   }
 
@@ -139,4 +142,17 @@ export const rolesApi = {
   acquire: (role) => api('POST', '/api/roles/acquire', { role }),
   checkDeliverer: () => api('GET', '/api/roles/check/deliverer'),
   checkDeliveryRequester: () => api('GET', '/api/roles/check/delivery-requester')
+};
+
+const verificationPath = '/api/verification';
+const verificationOptions = { log: false };
+
+export const verificationApi = {
+  validateDocument: (documentReference) =>
+    api('POST', verificationPath + '/documents/validate', { providerCode: 'MockBank', documentReference }, verificationOptions),
+  documents: () => api('GET', verificationPath + '/documents', undefined, verificationOptions),
+  document: (documentId) => api('GET', `${verificationPath}/documents/${documentId}`, undefined, verificationOptions),
+  verifyIdentity: (documentId, proof, idempotencyKey) =>
+    api('POST', verificationPath + '/attempts', { documentId, proof }, { ...verificationOptions, idempotencyKey }),
+  status: () => api('GET', verificationPath + '/status', undefined, verificationOptions)
 };
