@@ -1,0 +1,18 @@
+{
+  "id": "/",
+  "name": "PassBy — попутна доставка посилок",
+  "short_name": "PassBy",
+  "description": "З’єднуємо відправників із людьми, які можуть доставити посилку дорогою.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "background_color": "#f5f7fb",
+  "theme_color": "#0875f5",
+  "orientation": "portrait-primary",
+  "categories": ["travel", "business"],
+  "icons": [
+    { "src": "/passby-icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/passby-icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

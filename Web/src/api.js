@@ -84,7 +84,7 @@ export async function api(method, path, body, { auth = true, log = true, idempot
   if (sentToken) headers.Authorization = `Bearer ${token}`;
 
   let status = 0;
-  let data = null;
+  let data;
 
   try {
     const res = await fetch(BASE + path, {
