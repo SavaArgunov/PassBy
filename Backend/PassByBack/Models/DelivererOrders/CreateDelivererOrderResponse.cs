@@ -1,6 +1,6 @@
-﻿namespace PassByBack.DelivererOrders;
+﻿namespace PassByBack.Models.DelivererOrders;
 
-public class CreateDelivererOrderResponse
-{
-    
-}
+public sealed record CreateDelivererOrderResponse(
+    long DelivererIntentId,
+    string OrderStatusCode
+);

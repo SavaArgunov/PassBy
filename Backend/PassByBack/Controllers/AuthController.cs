@@ -34,4 +34,5 @@ public class AuthController : ControllerBase
 
         return StatusCode(StatusCodes.Status201Created, result);
     }
+    
 }

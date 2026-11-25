@@ -1,6 +1,7 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using PassByBack.Models;
 using PassByBack.Models.Entities;
+using PassByBack.Models.Views;
 
 namespace PassByBack.Data;
 
@@ -15,6 +16,10 @@ public class AppDbContext : DbContext
     public DbSet<PasswordCredential> PasswordCredentials => Set<PasswordCredential>();
     public DbSet<DeliveryRequester> DeliveryRequesters => Set<DeliveryRequester>();
     public DbSet<Deliverer> Deliverers => Set<Deliverer>();
+    public DbSet<DelivererIntent> DelivererIntents
+        => Set<DelivererIntent>();
+    public DbSet<DelivererIntentDetails> DelivererIntentDetails
+        => Set<DelivererIntentDetails>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
