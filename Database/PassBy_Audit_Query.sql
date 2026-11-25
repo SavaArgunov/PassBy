@@ -1,7 +1,21 @@
-﻿SET NOCOUNT ON;
+﻿/*
+PassBy | Unified read-only database audit
+Revision: 2026-11-25
+Sources: PassBy_Audit_Query(3).sql (general audit) and (2).sql
+         (effective permissions and migration verification).
+Run in PassBy as dbo, or a principal with sufficient metadata visibility,
+SELECT on audited objects and IMPERSONATE on passby_backend.
+No persistent DDL or DML. Table variables hold audit results only.
+No account records, password hashes, identity documents, or payment tokens exported.
+Checks of module text are structural checks, not functional or concurrency tests.
+*/
+SET NOCOUNT ON;
 
 IF DB_NAME() <> N'PassBy'
     THROW 52100, N'Incorrect target database.', 1;
+
+IF @@TRANCOUNT <> 0
+    THROW 52101, N'An active transaction already exists.', 1;
 
 
 ------------------------------------------------------
@@ -455,7 +469,7 @@ DefinitionChunks AS
 
     FROM DefinitionChunks
 
-    WHERE chunkNumber * 2000 < LEN(definition)
+    WHERE chunkNumber * 2000 < LEN(definition + N'#') - 1
 )
 SELECT
     schemaName,
@@ -831,10 +845,360 @@ SELECT
 
 
 ------------------------------------------------------
--- 23. KNOWN IMPLEMENTATION LIMITATIONS
+-- 23. EFFECTIVE KEY PERMISSIONS
 ------------------------------------------------------
 
-PRINT '23. KNOWN IMPLEMENTATION LIMITATIONS';
+
+PRINT '23. EFFECTIVE KEY PERMISSIONS';
+
+DECLARE @Keys TABLE
+(
+    schemaName SYSNAME,
+    tableName SYSNAME,
+    columnName SYSNAME,
+    keyType VARCHAR(2),
+    constraintName SYSNAME,
+    referencedTable NVARCHAR(257) NULL,
+    referencedColumn SYSNAME NULL,
+    isIdentity BIT
+);
+
+--------------------------------------------------
+-- 1. Primary Keys
+--------------------------------------------------
+
+INSERT INTO @Keys
+
+SELECT
+    s.name,
+    t.name,
+    c.name,
+    'PK',
+    k.name,
+    NULL,
+    NULL,
+    c.is_identity
+FROM sys.key_constraints AS k
+INNER JOIN sys.tables AS t
+    ON t.object_id = k.parent_object_id
+INNER JOIN sys.schemas AS s
+    ON s.schema_id = t.schema_id
+INNER JOIN sys.index_columns AS ic
+    ON ic.object_id = t.object_id
+   AND ic.index_id = k.unique_index_id
+   AND ic.key_ordinal > 0
+INNER JOIN sys.columns AS c
+    ON c.object_id = t.object_id
+   AND c.column_id = ic.column_id
+WHERE k.type = 'PK'
+  AND t.is_ms_shipped = 0;
+
+--------------------------------------------------
+-- 2. Foreign Keys
+--------------------------------------------------
+
+INSERT INTO @Keys
+
+SELECT
+    s.name,
+    t.name,
+    c.name,
+    'FK',
+    fk.name,
+    rs.name + N'.' + rt.name,
+    rc.name,
+    c.is_identity
+FROM sys.foreign_keys AS fk
+INNER JOIN sys.foreign_key_columns AS fkc
+    ON fkc.constraint_object_id = fk.object_id
+INNER JOIN sys.tables AS t
+    ON t.object_id = fkc.parent_object_id
+INNER JOIN sys.schemas AS s
+    ON s.schema_id = t.schema_id
+INNER JOIN sys.columns AS c
+    ON c.object_id = t.object_id
+   AND c.column_id = fkc.parent_column_id
+INNER JOIN sys.tables AS rt
+    ON rt.object_id = fkc.referenced_object_id
+INNER JOIN sys.schemas AS rs
+    ON rs.schema_id = rt.schema_id
+INNER JOIN sys.columns AS rc
+    ON rc.object_id = rt.object_id
+   AND rc.column_id = fkc.referenced_column_id
+WHERE t.is_ms_shipped = 0;
+
+--------------------------------------------------
+-- 3. Effective backend permissions
+--------------------------------------------------
+
+DECLARE @KeyPermissions TABLE
+(
+    schemaName SYSNAME,
+    tableName SYSNAME,
+    columnName SYSNAME,
+    keyType VARCHAR(2),
+    constraintName SYSNAME,
+    referencedTable NVARCHAR(257) NULL,
+    referencedColumn SYSNAME NULL,
+    isIdentity BIT,
+    canBackendUpdate INT NULL
+);
+
+EXECUTE AS USER = 'passby_backend';
+
+BEGIN TRY
+
+    INSERT INTO @KeyPermissions
+    SELECT
+        schemaName,
+        tableName,
+        columnName,
+        keyType,
+        constraintName,
+        referencedTable,
+        referencedColumn,
+        isIdentity,
+
+        HAS_PERMS_BY_NAME
+        (
+            QUOTENAME(schemaName) + N'.' +
+            QUOTENAME(tableName),
+            'OBJECT',
+            'UPDATE',
+            columnName,
+            'COLUMN'
+        ) AS canBackendUpdate
+
+    FROM @Keys;
+
+    REVERT;
+
+END TRY
+BEGIN CATCH
+
+    REVERT;
+    THROW;
+
+END CATCH;
+
+SELECT *
+FROM @KeyPermissions
+ORDER BY schemaName, tableName, keyType DESC, columnName, constraintName;
+
+-- Counts are distinct columns; a column may participate in multiple keys.
+-- NULL means unresolved metadata/permissions, never a successful denial.
+;WITH KeyColumns AS
+(
+    SELECT schemaName, tableName, columnName,
+           MAX(CASE WHEN canBackendUpdate = 1 THEN 1 ELSE 0 END) AS isWritable,
+           MAX(CASE WHEN canBackendUpdate IS NULL THEN 1 ELSE 0 END) AS isUnknown
+    FROM @KeyPermissions
+    GROUP BY schemaName, tableName, columnName
+)
+SELECT COUNT(*) AS distinctKeyColumns,
+       COUNT(CASE WHEN isWritable = 1 THEN 1 END) AS writableKeyColumns,
+       COUNT(CASE WHEN isUnknown = 1 THEN 1 END) AS unknownKeyColumns,
+       CASE WHEN COUNT(*) > 0
+                 AND MAX(isWritable) = 0 AND MAX(isUnknown) = 0
+            THEN 'PASS' ELSE 'FAIL' END AS keyProtectionCheck
+FROM KeyColumns;
+
+
+------------------------------------------------------
+-- 24. ORDER LIFECYCLE AND USER SETTINGS CHECKS
+------------------------------------------------------
+
+
+PRINT '24. ORDER LIFECYCLE AND USER SETTINGS CHECKS';
+
+SELECT
+    OBJECT_NAME(p.major_id) AS objectName,
+    COL_NAME(p.major_id, p.minor_id) AS columnName,
+    p.permission_name,
+    p.state_desc
+FROM sys.database_permissions AS p
+WHERE p.grantee_principal_id =
+      DATABASE_PRINCIPAL_ID('passby_backend')
+  AND p.class = 1
+  AND p.major_id IN
+  (
+      OBJECT_ID('dbo.DelivererIntent'),
+      OBJECT_ID('dbo.DeliveryRequesterIntent'),
+      OBJECT_ID('dbo.DelivererIntentHistory'),
+      OBJECT_ID('dbo.DeliveryRequesterIntentHistory')
+  )
+ORDER BY objectName, columnName, permission_name;
+
+SELECT
+    name,
+    modify_date,
+    is_disabled,
+    CASE
+        WHEN is_disabled = 0
+         AND OBJECT_DEFINITION(object_id)
+             LIKE '%Cancelled%'
+        THEN 'OK'
+        ELSE 'MISSING'
+    END AS cancelledProtection
+FROM sys.triggers
+WHERE object_id IN
+(
+    OBJECT_ID(N'dbo.TR_DelivererIntent_ImmutableFinalStates'),
+    OBJECT_ID(N'dbo.TR_DeliveryRequesterIntent_ImmutableFinalStates')
+);
+
+DECLARE @Definition NVARCHAR(MAX) =
+    OBJECT_DEFINITION(
+        OBJECT_ID('dbo.CreateCollaborativeDeal')
+    );
+
+SELECT
+    CASE
+        WHEN @Definition IS NOT NULL
+        THEN 'PASS' ELSE 'FAIL'
+    END AS procedureExists,
+
+    CASE
+        WHEN CHARINDEX(
+            N'@DStatus NOT IN (''Private'', ''Published'')',
+            @Definition
+        ) > 0
+        THEN 'PASS' ELSE 'FAIL'
+    END AS delivererStatusCheck,
+
+    CASE
+        WHEN CHARINDEX(
+            N'@RStatus NOT IN (''Private'', ''Published'')',
+            @Definition
+        ) > 0
+        THEN 'PASS' ELSE 'FAIL'
+    END AS requesterStatusCheck,
+
+    CASE
+        WHEN CHARINDEX(
+            N'@DStatus <> ''Published''',
+            @Definition
+        ) = 0
+        AND CHARINDEX(
+            N'@RStatus <> ''Published''',
+            @Definition
+        ) = 0
+        THEN 'PASS' ELSE 'FAIL'
+    END AS oldRestrictionsRemoved;
+
+SELECT
+    name,
+    modify_date
+FROM sys.procedures
+WHERE object_id =
+    OBJECT_ID('dbo.CreateCollaborativeDeal');
+
+SELECT
+    name,
+    create_date,
+    modify_date
+FROM sys.procedures
+WHERE object_id =
+    OBJECT_ID('dbo.CloseInteractionContext');
+
+SELECT
+    name,
+    modify_date,
+
+    CASE
+        WHEN OBJECT_DEFINITION(object_id)
+             LIKE '%UPDLOCK%'
+         AND OBJECT_DEFINITION(object_id)
+             LIKE '%PK_DelivererIntent%'
+         AND OBJECT_DEFINITION(object_id)
+             LIKE '%PK_DeliveryRequesterIntent%'
+        THEN 'PASS'
+        ELSE 'FAIL'
+    END AS intentLockProtection
+
+FROM sys.procedures
+WHERE object_id =
+    OBJECT_ID('dbo.CompleteCollaborativeDeal');
+
+
+SELECT
+    name,
+    modify_date,
+    is_disabled,
+
+    CASE
+        WHEN is_disabled = 0
+         AND OBJECT_DEFINITION(object_id)
+             LIKE '%READCOMMITTEDLOCK%'
+         AND OBJECT_DEFINITION(object_id)
+             LIKE '%Cancelled%'
+         AND OBJECT_DEFINITION(object_id)
+             LIKE '%Fulfilled%'
+        THEN 'PASS'
+        ELSE 'FAIL'
+    END AS immutabilityProtection
+
+FROM sys.triggers
+WHERE object_id IN
+(
+    OBJECT_ID(N'dbo.TR_DelivererIntent_ImmutableFinalStates'),
+    OBJECT_ID(N'dbo.TR_DeliveryRequesterIntent_ImmutableFinalStates')
+);
+
+SELECT COUNT_BIG(*) AS accountsWithoutSettings
+FROM dbo.UserAccount u WHERE NOT EXISTS (SELECT 1 FROM dbo.UserSettings s WHERE s.userId=u.userId);
+SELECT name,is_disabled,CASE WHEN is_disabled = 0 AND OBJECT_DEFINITION(object_id) LIKE '%INSERT INTO dbo.UserSettings%' THEN 'PASS' ELSE 'FAIL' END AS settingsTrigger
+FROM sys.triggers WHERE object_id=OBJECT_ID(N'dbo.TR_UserAccount_CreateUserSettings');
+
+
+-- Missing objects must be visible, rather than silently yielding no rows.
+SELECT v.objectName,
+       CASE WHEN OBJECT_ID(v.objectName, v.objectType) IS NOT NULL
+            THEN 'PASS' ELSE 'FAIL' END AS objectExists
+FROM (VALUES
+    (N'dbo.SetDelivererOrderStatus', 'P'),
+    (N'dbo.SetDeliveryRequesterOrderStatus', 'P'),
+    (N'dbo.CloseInteractionContext', 'P'),
+    (N'dbo.CreateCollaborativeDeal', 'P'),
+    (N'dbo.CompleteCollaborativeDeal', 'P'),
+    (N'dbo.TR_DelivererIntent_ImmutableFinalStates', 'TR'),
+    (N'dbo.TR_DeliveryRequesterIntent_ImmutableFinalStates', 'TR'),
+    (N'dbo.TR_UserAccount_CreateUserSettings', 'TR')
+) AS v(objectName, objectType);
+
+
+------------------------------------------------------
+-- 25. EFFECTIVE SETTINGS AND PROCEDURE RIGHTS
+------------------------------------------------------
+
+
+PRINT '25. EFFECTIVE SETTINGS AND PROCEDURE RIGHTS';
+
+EXECUTE AS USER = 'passby_backend';
+BEGIN TRY
+    SELECT HAS_PERMS_BY_NAME('dbo.UserSettings','OBJECT','SELECT') AS canSelect,
+           HAS_PERMS_BY_NAME('dbo.UserSettings','OBJECT','INSERT') AS canInsert,
+           HAS_PERMS_BY_NAME('dbo.UserSettings','OBJECT','DELETE') AS canDelete,
+           HAS_PERMS_BY_NAME('dbo.UserSettings','OBJECT','UPDATE','userId','COLUMN') AS canUpdateUserId,
+           HAS_PERMS_BY_NAME('dbo.UserSettings','OBJECT','UPDATE','orderPublishingPolicy','COLUMN') AS canUpdatePublishingPolicy,
+           HAS_PERMS_BY_NAME('dbo.PasswordCredential','OBJECT','UPDATE','passwordHash','COLUMN') AS canUpdatePasswordHash;
+    SELECT v.objectName,HAS_PERMS_BY_NAME(v.objectName,'OBJECT','EXECUTE') AS canExecute
+    FROM (VALUES ('dbo.SetDelivererOrderStatus'),('dbo.SetDeliveryRequesterOrderStatus'),
+                 ('dbo.CloseInteractionContext'),('dbo.CreateCollaborativeDeal'),
+                 ('dbo.CompleteCollaborativeDeal'),('dbo.AcquireInteractionIntentLocks')) v(objectName);
+    REVERT;
+END TRY
+BEGIN CATCH
+    REVERT;
+    THROW;
+END CATCH;
+
+
+------------------------------------------------------
+-- 26. KNOWN IMPLEMENTATION LIMITATIONS
+------------------------------------------------------
+
+PRINT '26. KNOWN IMPLEMENTATION LIMITATIONS';
 
 SELECT *
 FROM
@@ -906,9 +1270,13 @@ FROM
 
     (
         N'TEST_COVERAGE',
-        N'17 lifecycle smoke checks passed on 2026-11-24.
-        Test data was rolled back. Exhaustive negative,
-        concurrent and integration testing is pending.'
+        N'Historical results: 17 lifecycle checks passed on 2026-11-24.
+        On 2026-11-25, 45 main Order/interaction/deal checks,
+        4 additional rollback checks and 3 UserSettings checks passed
+        in the original separate scripts. All test data was rolled back.
+        Consolidated migration and smoke tests have not been executed.
+        Concurrent testing is deferred; backend integration is unverified.
+        This audit does not execute smoke tests.'
     )
 
 ) AS limitations
@@ -919,10 +1287,10 @@ FROM
 
 
 ------------------------------------------------------
--- 24. AUDIT COMPLETION
+-- 27. AUDIT COMPLETION
 ------------------------------------------------------
 
-PRINT '24. AUDIT COMPLETION';
+PRINT '27. AUDIT COMPLETION';
 
 SELECT
     N'DATABASE AUDIT COMPLETED' AS result,
