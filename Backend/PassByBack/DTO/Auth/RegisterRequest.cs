@@ -9,6 +9,7 @@ public class RegisterRequest
     public string EmailAddress { get; set; } = string.Empty;
 
     [Required]
+    [MinLength(12)]
     public string Password { get; set; } = string.Empty;
 
     [Required]

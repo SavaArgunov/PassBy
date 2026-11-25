@@ -1,5 +1,6 @@
-﻿using Microsoft.EntityFrameworkCore;
-using PassByBack.Models;
+
+using Microsoft.EntityFrameworkCore;
+using PassByBack.Data.Configurations;
 using PassByBack.Models.Entities;
 using PassByBack.Models.Views;
 
@@ -21,9 +22,16 @@ public class AppDbContext : DbContext
     public DbSet<DelivererIntentDetails> DelivererIntentDetails
         => Set<DelivererIntentDetails>();
 
+    public DbSet<VerificationProvider> VerificationProviders => Set<VerificationProvider>();
+    public DbSet<VerificationOutcome> VerificationOutcomes => Set<VerificationOutcome>();
+    public DbSet<ValidatedDocument> ValidatedDocuments => Set<ValidatedDocument>();
+    public DbSet<IdentityVerification> IdentityVerifications => Set<IdentityVerification>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+
+        // Схему БД створюють SQL-скрипти з папки Database/ (без EF-міграцій).
 
         modelBuilder.Entity<UserAccount>(entity =>
         {
@@ -32,20 +40,16 @@ public class AppDbContext : DbContext
             entity.HasIndex(x => x.EmailAddress)
                 .IsUnique();
 
-            // entity.Property(x => x.RegisteredAtUtc)
-            //     .HasDefaultValueSql("SYSUTCDATETIME()");
+            entity.HasIndex(x => x.CredentialId)
+                .IsUnique();
 
             entity.Property(x => x.IsBlocked)
                 .HasDefaultValue(false);
-        });
 
-        modelBuilder.Entity<PasswordCredential>(entity =>
-        {
-            entity.HasKey(x => x.UserId);
-
-            entity.HasOne(x => x.UserAccount)
-                .WithOne(x => x.PasswordCredential)
-                .HasForeignKey<PasswordCredential>(x => x.UserId)
+            // UserAccount.credentialId -> PasswordCredential.credentialId
+            entity.HasOne(x => x.PasswordCredential)
+                .WithOne()
+                .HasForeignKey<UserAccount>(x => x.CredentialId)
                 .OnDelete(DeleteBehavior.NoAction);
         });
 
@@ -69,6 +73,7 @@ public class AppDbContext : DbContext
                 .OnDelete(DeleteBehavior.NoAction);
         });
 
+        modelBuilder.ConfigureVerification();
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);
     }
 }

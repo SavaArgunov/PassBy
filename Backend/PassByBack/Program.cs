@@ -1,8 +1,5 @@
-﻿using System.Text;
+using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -10,10 +7,12 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi.Models;
+using PassByBack.Authorization;
 using PassByBack.Data;
-using PassByBack.Models;
 using PassByBack.Models.Entities;
 using PassByBack.Services;
+using PassByBack.Services.Verification;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -51,6 +50,7 @@ builder.Services
     .AddJwtBearer(options =>
     {
         options.MapInboundClaims = false;
+        options.EventsType = typeof(AccountJwtBearerEvents);
 
         options.TokenValidationParameters = new TokenValidationParameters
         {
@@ -76,13 +76,32 @@ builder.Services.AddRoleAuthorization();
 builder.Services.AddScoped<AuthService>();
 builder.Services.AddScoped<DelivererOrderService>();
 
+var verificationConnection = builder.Configuration.GetConnectionString("DefaultConnection");
+
+var mockBankEnabled = builder.Environment.IsDevelopment() &&
+    builder.Configuration.GetValue<bool>("Verification:MockBank:Enabled") &&
+    (VerificationSettings.UsesLocalDatabase(verificationConnection) ||
+     VerificationSettings.UsesAzureTestDatabase(
+         verificationConnection,
+         builder.Configuration["Verification:MockBank:AzureTestServer"],
+         builder.Configuration["Verification:MockBank:AzureTestDatabase"]));
+var successValidity = builder.Configuration.GetValue("Verification:SuccessValidity", TimeSpan.FromDays(30));
+if (successValidity <= TimeSpan.Zero)
+{
+    throw new InvalidOperationException("Verification:SuccessValidity must be positive.");
+}
+
+builder.Services.AddSingleton(new VerificationSettings(mockBankEnabled, successValidity));
+builder.Services.AddSingleton<MockBank>();
+builder.Services.AddScoped<VerificationService>();
+
 builder.Services
     .AddScoped<IPasswordHasher<UserAccount>,
         PasswordHasher<UserAccount>>();
 
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("AllowAll", policy =>
+    options.AddPolicy("Frontend", policy =>
     {
         policy.AllowAnyOrigin()
             .AllowAnyMethod()
@@ -92,12 +111,11 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-
+app.UseCors("Frontend");
 
 using (var scope = app.Services.CreateScope())
 {
-    var db = scope.ServiceProvider
-        .GetRequiredService<AppDbContext>();
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
     Console.WriteLine(
         await db.Database.CanConnectAsync()

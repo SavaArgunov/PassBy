@@ -1,4 +1,4 @@
-using System.ComponentModel.DataAnnotations;
+﻿using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
 namespace PassByBack.Models.Entities;
@@ -9,7 +9,7 @@ public class Deliverer
     [Key]
     [ForeignKey(nameof(UserAccount))]
     [Column("userId")]
-    public int UserId { get; set; }
+    public long UserId { get; set; }
 
     [Column("registeredAtUtc")]
     public DateTime RegisteredAtUtc { get; set; }
