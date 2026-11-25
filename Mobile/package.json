@@ -7,6 +7,7 @@
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
+    "test:agreement": "node --test src/features/agreement/agreement.test.js",
     "android:sync": "npm run build && cap sync android",
     "android:open": "cap open android"
   },
