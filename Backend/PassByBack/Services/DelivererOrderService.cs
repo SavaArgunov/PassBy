@@ -4,6 +4,8 @@ using Microsoft.EntityFrameworkCore;
 using PassByBack.Data;
 using PassByBack.Models.DelivererOrders;
 using PassByBack.Models.Views;
+using System.Text.Json;
+using NetTopologySuite.Geometries;
 
 namespace PassByBack.Services;
 
@@ -209,5 +211,241 @@ public class DelivererOrderService
             IsAvailableAsInitiator =
                 order.IsAvailableAsInitiator ?? false
         };
+    }
+    
+    public async Task<DelivererOrderResponse?> UpdateAsync(
+    long userId,
+    long orderId,
+    JsonElement patch,
+    CancellationToken cancellationToken = default)
+{
+    await using var transaction =
+        await _db.Database.BeginTransactionAsync(cancellationToken);
+
+    await AcquireOrderLockAsync(orderId, cancellationToken);
+
+    // Шукаємо замовлення поточного користувача.
+    var order = await _db.DelivererIntents
+        .FirstOrDefaultAsync(
+            x => x.DelivererIntentId == orderId &&
+                 x.AuthorDelivererUserId == userId,
+            cancellationToken);
+
+    if (order is null)
+    {
+        return null;
+    }
+
+    // Перевіряємо пов'язані угоди.
+    var details = await _db.DelivererIntentDetails
+        .FirstAsync(
+            x => x.DelivererIntentId == orderId,
+            cancellationToken);
+
+    if (details.ActiveDealCount > 0 ||
+        details.FulfilledDealCount > 0)
+    {
+        throw new OrderUpdateConflictException(
+            "Order has an active or fulfilled deal.");
+    }
+
+    // Застосовуємо PATCH та перевіряємо результат.
+    var request = DelivererOrderPatch.Apply(order, patch);
+
+    // Оновлюємо координати, якщо вони змінилися.
+    if (order.StartingCoordinates.X != request.StartLongitude!.Value ||
+        order.StartingCoordinates.Y != request.StartLatitude!.Value)
+    {
+        order.StartingCoordinates = new Point(
+            request.StartLongitude.Value,
+            request.StartLatitude.Value)
+        {
+            SRID = 4326
+        };
+    }
+
+    if (order.EndCoordinates.X != request.EndLongitude!.Value ||
+        order.EndCoordinates.Y != request.EndLatitude!.Value)
+    {
+        order.EndCoordinates = new Point(
+            request.EndLongitude.Value,
+            request.EndLatitude.Value)
+        {
+            SRID = 4326
+        };
+    }
+
+    // Оновлюємо інші поля.
+    order.DepartureTimeAtUtc =
+        request.DepartureTimeAtUtc!.Value.UtcDateTime;
+
+    order.AvailableMaxWeight = request.AvailableMaxWeight;
+    order.AvailableMaxLength = request.AvailableMaxLength;
+    order.AvailableMaxDepth = request.AvailableMaxDepth;
+    order.AvailableMaxHeight = request.AvailableMaxHeight;
+
+    order.MinRewardReceived = request.MinRewardReceived;
+    order.MaxRewardReceived = request.MaxRewardReceived;
+
+    await _db.SaveChangesAsync(cancellationToken);
+
+    var result = await GetByIdAsync(
+        userId,
+        orderId,
+        cancellationToken);
+
+    await transaction.CommitAsync(cancellationToken);
+
+    return result;
+    }
+    
+    public async Task<DelivererOrderResponse?> CancelAsync(
+        long userId,
+        long orderId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var transaction =
+            await _db.Database.BeginTransactionAsync(cancellationToken);
+
+        await AcquireOrderLockAsync(
+            orderId,
+            cancellationToken);
+
+        // Перевіряємо існування та власника замовлення.
+        var order = await _db.DelivererIntents
+            .FirstOrDefaultAsync(
+                x => x.DelivererIntentId == orderId &&
+                     x.AuthorDelivererUserId == userId,
+                cancellationToken);
+
+        if (order is null)
+        {
+            return null;
+        }
+
+        // Повторне скасування не змінює стан замовлення.
+        if (order.OrderStatusCode == "Cancelled")
+        {
+            var existing = await GetByIdAsync(
+                userId,
+                orderId,
+                cancellationToken);
+
+            await transaction.CommitAsync(cancellationToken);
+
+            return existing;
+        }
+
+        var details = await _db.DelivererIntentDetails
+            .FirstAsync(
+                x => x.DelivererIntentId == orderId,
+                cancellationToken);
+
+        // Активні або виконані угоди забороняють скасування.
+        if (details.ActiveDealCount > 0 ||
+            details.FulfilledDealCount > 0)
+        {
+            throw new OrderUpdateConflictException(
+                "Order has an active or fulfilled deal.");
+        }
+
+        // Тимчасове обмеження до узгодження
+        // механізму закриття пов'язаних взаємодій.
+        if (details.TotalInteractionCount > 0)
+        {
+            throw new OrderUpdateConflictException(
+                "Order has related interactions.");
+        }
+
+        order.OrderStatusCode = "Cancelled";
+
+        await _db.SaveChangesAsync(cancellationToken);
+
+        var result = await GetByIdAsync(
+            userId,
+            orderId,
+            cancellationToken);
+
+        await transaction.CommitAsync(cancellationToken);
+
+        return result;
+    }
+    
+    public async Task<DelivererOrderSearchPage> SearchAsync(
+        long userId,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken = default)
+    {
+        var orders = await _db.DelivererIntentDetails
+            .AsNoTracking()
+            .Where(x =>
+                x.IsAvailableAsTarget == true &&
+                x.AuthorDelivererUserId != userId)
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .ThenByDescending(x => x.DelivererIntentId)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize + 1)
+            .ToListAsync(cancellationToken);
+
+        var hasMore = orders.Count > pageSize;
+
+        var items = orders
+            .Take(pageSize)
+            .Select(x => new DelivererOrderSearchResponse(
+                x.DelivererIntentId,
+
+                x.StartingCoordinates.Y,
+                x.StartingCoordinates.X,
+
+                x.EndCoordinates.Y,
+                x.EndCoordinates.X,
+
+                DateTime.SpecifyKind(
+                    x.DepartureTimeAtUtc,
+                    DateTimeKind.Utc),
+
+                x.AvailableMaxWeight,
+                x.AvailableMaxLength,
+                x.AvailableMaxDepth,
+                x.AvailableMaxHeight,
+
+                x.MinRewardReceived,
+                x.MaxRewardReceived
+            ))
+            .ToList();
+
+        return new DelivererOrderSearchPage(
+            items,
+            page,
+            pageSize,
+            hasMore
+        );
+    }
+    
+    
+    private async Task AcquireOrderLockAsync(
+        long orderId,
+        CancellationToken cancellationToken)
+    {
+        var resource = FormattableString.Invariant(
+            $"PassBy:Intent:D:{orderId}");
+
+        await _db.Database.ExecuteSqlInterpolatedAsync($@"
+        DECLARE @LockResult INT;
+
+        EXEC @LockResult = sys.sp_getapplock
+            @Resource = {resource},
+            @LockMode = 'Exclusive',
+            @LockOwner = 'Transaction',
+            @DbPrincipal = 'public',
+            @LockTimeout = 10000;
+
+        IF @LockResult IN (-1, -2, -3)
+            THROW 51990, N'Failed to lock deliverer order.', 1;
+
+        IF @LockResult < 0
+            THROW 51991, N'Order lock error.', 1;
+    ", cancellationToken);
     }
 }

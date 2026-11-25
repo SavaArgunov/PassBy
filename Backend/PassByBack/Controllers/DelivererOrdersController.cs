@@ -4,6 +4,9 @@ using Microsoft.Data.SqlClient;
 using PassByBack.Authorization;
 using PassByBack.Models.DelivererOrders;
 using PassByBack.Services;
+using System.ComponentModel.DataAnnotations;
+using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 
 namespace PassByBack.Controllers;
 
@@ -95,9 +98,65 @@ public class DelivererOrdersController : ControllerBase
     }
 
     [HttpPatch("{id:long}")]
-    public IActionResult Update(long id)
+    public async Task<IActionResult> Update(
+        long id,
+        [FromBody] JsonElement patch,
+        CancellationToken cancellationToken)
     {
-        return StatusCode(501);
+        var userId = GetUserId();
+
+        if (userId is null)
+        {
+            return Unauthorized();
+        }
+
+        try
+        {
+            var order = await _service.UpdateAsync(
+                userId.Value,
+                id,
+                patch,
+                cancellationToken);
+
+            if (order is null)
+            {
+                return NotFound();
+            }
+
+            return Ok(order);
+        }
+        catch (ValidationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (JsonException)
+        {
+            return BadRequest(new
+            {
+                message = "Invalid field value or type."
+            });
+        }
+        catch (OrderUpdateConflictException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+        catch (SqlException ex)
+            when (ex.Number is 51990 or 1205 or 51160)
+        {
+            return Conflict(new
+            {
+                message = "Order cannot be updated at this time."
+            });
+        }
+        catch (DbUpdateException ex)
+            when (ex.InnerException is SqlException sql &&
+                  sql.Number is 51160 or 1205)
+        {
+            return Conflict(new
+            {
+                message = "Order cannot be updated at this time."
+            });
+        }
     }
 
     [HttpPost("{id:long}/cancel")]
