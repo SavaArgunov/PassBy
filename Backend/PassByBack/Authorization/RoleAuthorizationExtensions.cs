@@ -1,4 +1,3 @@
-﻿using Microsoft.AspNetCore.Authentication;
 using PassByBack.Authorization;
 
 // Namespace навмисно такий, щоб у Program.cs не потрібен був додатковий using.
@@ -8,13 +7,13 @@ public static class RoleAuthorizationExtensions
 {
     /// <summary>
     /// Підключає рольову авторизацію: сховище ролей, підвантаження ролей у claims і політики.
-    /// Потребує рядка підключення ConnectionStrings:PassBy.
+    /// Потребує рядка підключення ConnectionStrings:DefaultConnection.
     /// Викликати після AddAuthentication / AddAuthorization.
     /// </summary>
     public static IServiceCollection AddRoleAuthorization(this IServiceCollection services)
     {
         services.AddScoped<IRoleStore, SqlRoleStore>();
-        services.AddScoped<IClaimsTransformation, RoleClaimsTransformation>();
+        services.AddScoped<AccountJwtBearerEvents>();
 
         services.AddAuthorization(options =>
         {

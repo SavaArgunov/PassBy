@@ -163,3 +163,6 @@ button:disabled { cursor: not-allowed; }
 .log-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 13px; }
 .log-path { font-family: ui-monospace, Menlo, monospace; }
 .log pre { margin: 6px 0 0; padding: 8px 10px; background: #0f172a; color: #e2e8f0; border-radius: 10px; font-size: 12px; overflow-x: auto; max-height: 160px; }
+
+.verification-page .btn[aria-pressed="true"] { border-color: var(--blue); background: var(--blue-soft); }
+.verification-proof { margin-top: 20px; }
