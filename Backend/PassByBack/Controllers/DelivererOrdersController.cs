@@ -160,8 +160,41 @@ public class DelivererOrdersController : ControllerBase
     }
 
     [HttpPost("{id:long}/cancel")]
-    public async Task<IActionResult> Cancel(
+    public Task<IActionResult> Cancel(
         long id,
+        CancellationToken cancellationToken)
+    {
+        return ChangeStatusAsync(
+            id,
+            "Cancelled",
+            cancellationToken);
+    }
+
+    [HttpPost("{id:long}/publish")]
+    public Task<IActionResult> Publish(
+        long id,
+        CancellationToken cancellationToken)
+    {
+        return ChangeStatusAsync(
+            id,
+            "Published",
+            cancellationToken);
+    }
+
+    [HttpPost("{id:long}/unpublish")]
+    public Task<IActionResult> Unpublish(
+        long id,
+        CancellationToken cancellationToken)
+    {
+        return ChangeStatusAsync(
+            id,
+            "Private",
+            cancellationToken);
+    }
+    
+    private async Task<IActionResult> ChangeStatusAsync(
+        long id,
+        string newStatusCode,
         CancellationToken cancellationToken)
     {
         var userId = GetUserId();
@@ -181,9 +214,10 @@ public class DelivererOrdersController : ControllerBase
 
         try
         {
-            var result = await _service.CancelAsync(
+            var result = await _service.SetStatusAsync(
                 userId.Value,
                 id,
+                newStatusCode,
                 cancellationToken);
 
             return Ok(result);
