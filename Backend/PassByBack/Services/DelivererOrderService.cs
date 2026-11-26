@@ -235,6 +235,12 @@ public class DelivererOrderService
     {
         return null;
     }
+    
+    if (order.OrderStatusCode == "Cancelled")
+    {
+        throw new OrderUpdateConflictException(
+            "Cancelled order is immutable.");
+    }
 
     // Перевіряємо пов'язані угоди.
     var details = await _db.DelivererIntentDetails
@@ -242,11 +248,10 @@ public class DelivererOrderService
             x => x.DelivererIntentId == orderId,
             cancellationToken);
 
-    if (details.ActiveDealCount > 0 ||
-        details.FulfilledDealCount > 0)
+    if (details.FulfilledDealCount > 0)
     {
         throw new OrderUpdateConflictException(
-            "Order has an active or fulfilled deal.");
+            "Fulfilled order is immutable.");
     }
 
     // Застосовуємо PATCH та перевіряємо результат.
@@ -299,76 +304,102 @@ public class DelivererOrderService
     return result;
     }
     
-    public async Task<DelivererOrderResponse?> CancelAsync(
+    public Task<DelivererOrderStatusResponse> CancelAsync(
         long userId,
         long orderId,
         CancellationToken cancellationToken = default)
     {
-        await using var transaction =
-            await _db.Database.BeginTransactionAsync(cancellationToken);
-
-        await AcquireOrderLockAsync(
-            orderId,
-            cancellationToken);
-
-        // Перевіряємо існування та власника замовлення.
-        var order = await _db.DelivererIntents
-            .FirstOrDefaultAsync(
-                x => x.DelivererIntentId == orderId &&
-                     x.AuthorDelivererUserId == userId,
-                cancellationToken);
-
-        if (order is null)
-        {
-            return null;
-        }
-
-        // Повторне скасування не змінює стан замовлення.
-        if (order.OrderStatusCode == "Cancelled")
-        {
-            var existing = await GetByIdAsync(
-                userId,
-                orderId,
-                cancellationToken);
-
-            await transaction.CommitAsync(cancellationToken);
-
-            return existing;
-        }
-
-        var details = await _db.DelivererIntentDetails
-            .FirstAsync(
-                x => x.DelivererIntentId == orderId,
-                cancellationToken);
-
-        // Активні або виконані угоди забороняють скасування.
-        if (details.ActiveDealCount > 0 ||
-            details.FulfilledDealCount > 0)
-        {
-            throw new OrderUpdateConflictException(
-                "Order has an active or fulfilled deal.");
-        }
-
-        // Тимчасове обмеження до узгодження
-        // механізму закриття пов'язаних взаємодій.
-        if (details.TotalInteractionCount > 0)
-        {
-            throw new OrderUpdateConflictException(
-                "Order has related interactions.");
-        }
-
-        order.OrderStatusCode = "Cancelled";
-
-        await _db.SaveChangesAsync(cancellationToken);
-
-        var result = await GetByIdAsync(
+        return SetStatusAsync(
             userId,
             orderId,
+            "Cancelled",
             cancellationToken);
+    }
+    
+    public async Task<DelivererOrderStatusResponse> SetStatusAsync(
+    long userId,
+    long orderId,
+    string newStatusCode,
+    CancellationToken cancellationToken = default)
+    {
+        var connection = _db.Database.GetDbConnection();
 
-        await transaction.CommitAsync(cancellationToken);
+        var shouldClose =
+            connection.State != ConnectionState.Open;
 
-        return result;
+        if (shouldClose)
+        {
+            await _db.Database.OpenConnectionAsync(
+                cancellationToken);
+        }
+
+        try
+        {
+            await using var command =
+                connection.CreateCommand();
+
+            command.CommandText =
+                "dbo.SetDelivererOrderStatus";
+
+            command.CommandType =
+                CommandType.StoredProcedure;
+
+            command.Parameters.Add(
+                new SqlParameter(
+                    "@OrderId",
+                    SqlDbType.BigInt)
+                {
+                    Value = orderId
+                });
+
+            command.Parameters.Add(
+                new SqlParameter(
+                    "@ActorUserId",
+                    SqlDbType.BigInt)
+                {
+                    Value = userId
+                });
+
+            command.Parameters.Add(
+                new SqlParameter(
+                    "@NewStatusCode",
+                    SqlDbType.VarChar,
+                    64)
+                {
+                    Value = newStatusCode
+                });
+
+            await using var reader =
+                await command.ExecuteReaderAsync(
+                    cancellationToken);
+
+            if (!await reader.ReadAsync(cancellationToken))
+            {
+                throw new InvalidOperationException(
+                    "Order status procedure returned no result.");
+            }
+
+            return new DelivererOrderStatusResponse(
+                reader.GetInt64(
+                    reader.GetOrdinal("delivererIntentId")),
+
+                reader.GetString(
+                    reader.GetOrdinal("previousOrderStatusCode")),
+
+                reader.GetString(
+                    reader.GetOrdinal("orderStatusCode")),
+
+                reader.GetBoolean(
+                    reader.GetOrdinal("wasChanged"))
+            );
+        }
+        finally
+        {
+            if (shouldClose)
+            {
+                await _db.Database.CloseConnectionAsync();
+            }
+        }
     }
     
     public async Task<DelivererOrderSearchPage> SearchAsync(

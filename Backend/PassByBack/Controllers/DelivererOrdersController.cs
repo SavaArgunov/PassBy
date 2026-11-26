@@ -150,7 +150,7 @@ public class DelivererOrdersController : ControllerBase
         }
         catch (DbUpdateException ex)
             when (ex.InnerException is SqlException sql &&
-                  sql.Number is 51160 or 1205)
+                  sql.Number is 51603 or 51160 or 1205)
         {
             return Conflict(new
             {
@@ -160,9 +160,82 @@ public class DelivererOrdersController : ControllerBase
     }
 
     [HttpPost("{id:long}/cancel")]
-    public IActionResult Cancel(long id)
+    public async Task<IActionResult> Cancel(
+        long id,
+        CancellationToken cancellationToken)
     {
-        return StatusCode(501);
+        var userId = GetUserId();
+
+        if (userId is null)
+        {
+            return Unauthorized();
+        }
+
+        if (id <= 0)
+        {
+            return BadRequest(new
+            {
+                message = "Invalid order ID."
+            });
+        }
+
+        try
+        {
+            var result = await _service.CancelAsync(
+                userId.Value,
+                id,
+                cancellationToken);
+
+            return Ok(result);
+        }
+        catch (SqlException ex)
+            when (ex.Number is 51620 or 51621)
+        {
+            return BadRequest(new
+            {
+                message = "Invalid order status parameters."
+            });
+        }
+        catch (SqlException ex)
+            when (ex.Number is 51623 or 51624)
+        {
+            return NotFound();
+        }
+        catch (SqlException ex)
+            when (ex.Number is
+                      51622 or
+                      51625 or
+                      51626 or
+                      51627 or
+                      51628 or
+                      51629 or
+                      51603 or
+                      51160 or
+                      1205)
+        {
+            var message = ex.Number switch
+            {
+                51625 or 51603 =>
+                    "Cancelled order is immutable.",
+
+                51626 or 51160 =>
+                    "Fulfilled order is immutable.",
+
+                51627 =>
+                    "Invalid order status transition.",
+
+                51628 =>
+                    "Order has an active deal.",
+
+                51629 =>
+                    "Order has an active interaction.",
+
+                _ =>
+                    "Order cannot be updated at this time."
+            };
+
+            return Conflict(new { message });
+        }
     }
 
     private long? GetUserId()
