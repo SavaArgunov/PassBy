@@ -1,4 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
+import AgreementExperience from './features/agreement/AgreementExperience.jsx'
+
+const agreementDemoEnabled = import.meta.env.DEV || import.meta.env.VITE_AGREEMENT_DEMO === 'true'
 
 const sampleOrders = [
   { id: 'PB-1048', from: 'Київ', to: 'Львів', route: 'Київ → Львів', item: 'Документи', size: '0,5 кг', price: 250, courier: 'Марко', time: 'Сьогодні, 14:30', ownerType: 'sender' },
@@ -277,8 +280,10 @@ function Search({ onBack, toast, onSearchResults }) {
   </main>
 }
 
+const agreementUi = { Brand, PageHeader, Footer, Button, Field }
+
 export default function App() {
-  const [screen, setScreen] = useState('intro')
+  const [screen, setScreen] = useState(() => agreementDemoEnabled && new URLSearchParams(window.location.search).get('demo') === 'agreement' ? 'agreement-chat' : 'intro')
   const [authMode, setAuthMode] = useState('register')
   const [account, setAccount] = useState(null)
   const [loginEmail, setLoginEmail] = useState('')
@@ -329,7 +334,8 @@ export default function App() {
   }
   function login(email, passwordHash, setError) { const stored = saved(`passby-account:${email}`, null); if (!stored) return setError('Акаунт не знайдено. Спочатку створіть його.'); if (stored.passwordHash !== passwordHash) return setError('Неправильний пароль. Спробуйте ще раз.'); setRegistrationNotice(false); enter(stored) }
   let view
-  if (screen === 'intro') view = <Intro onRegister={() => { setAuthMode('register'); setScreen('auth') }} onLogin={() => { setAuthMode('login'); setScreen('auth') }} />
+  if (agreementDemoEnabled && screen.startsWith('agreement-')) view = <AgreementExperience screen={screen} navigate={setScreen} onExit={() => setScreen(account ? (isSetupComplete(progress) ? 'registered-home' : 'home') : 'intro')} ui={agreementUi} toast={toast} />
+  else if (screen === 'intro') view = <Intro onRegister={() => { setAuthMode('register'); setScreen('auth') }} onLogin={() => { setAuthMode('login'); setScreen('auth') }} />
   else if (screen === 'auth') view = <Auth mode={authMode} setMode={setAuthMode} onBack={() => setScreen('intro')} onRegister={info => { setPending(info); setScreen('confirmation') }} onLogin={login} initialEmail={loginEmail} registrationNotice={registrationNotice} />
   else if (screen === 'confirmation') view = <Confirmation phone={pending?.phone} onBack={() => setScreen('auth')} onConfirm={() => { const verified = { ...pending, phoneVerified: true }; localStorage.setItem(`passby-account:${verified.email}`, JSON.stringify(verified)); localStorage.setItem(`passby-progress:${verified.email}`, JSON.stringify(progressEmpty)); setLoginEmail(verified.email); setRegistrationNotice(true); setPending(null); setAccount(null); setProgress({ ...progressEmpty }); setAuthMode('login'); setScreen('auth') }} />
   else if (screen === 'home' || screen === 'registered-home') view = <Home account={account || { fullName: 'Ярослав Коваленко' }} progress={progress} open={open} onProfile={() => setScreen('profile')} onOrder={() => toast('Деталі замовлення поки недоступні.')} toast={toast} searchResults={searchResults} onSearch={() => setScreen('search')} onClearSearch={() => setSearchResults(null)} isRegistered={screen === 'registered-home'} />
@@ -338,5 +344,5 @@ export default function App() {
   else if (screen === 'role') view = <Role current={progress.role} onBack={goHome} onSave={role => saveProgress({ role })} />
   else if (screen === 'profile') view = <Profile account={account || { fullName: 'Ярослав Коваленко', email: 'yaroslav.k@gmail.com', phone: '+380 (67) 123-45-67' }} progress={progress} onBack={goHome} open={open} onLogout={() => { setAccount(null); setProgress(progressEmpty); setScreen('intro') }} onToast={toast} onRoleChange={updateProfileRole} />
   else if (screen === 'search') view = <Search onBack={goHome} toast={toast} onSearchResults={(items, route) => setSearchResults({ items, route, key: `search-${Date.now()}` })} />
-  return <div className="app-shell">{view}{toastText && <div className="toast" role="status">{toastText}</div>}</div>
+  return <div className="app-shell">{view}{agreementDemoEnabled && !screen.startsWith('agreement-') && <button className="agreement-demo-entry" onClick={() => setScreen('agreement-chat')}>Демо · угода</button>}{toastText && <div className="toast" role="status">{toastText}</div>}</div>
 }
